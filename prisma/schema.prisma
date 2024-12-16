@@ -1,0 +1,114 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider        = "postgresql"
+  url             = env("DATABASE_URL")
+  directUrl       = env("DIRECT_URL")
+}
+
+model User {
+  id               String    @id @default(cuid())
+  authId           String    @unique @map("auth_id") // Link to Supabase auth user
+  handle           String    @unique
+  displayName      String
+  profilePicture   String?   @map("profile_picture")
+  roles            String[]
+  lastSwipe        DateTime  @default(dbgenerated("'1970-01-01T00:00:00Z'::timestamp"))
+  swipesLeft       Int       @default(0) @db.SmallInt
+  ownedProjects    Project[] @relation("ProjectOwner")
+  managedProjects  Project[] @relation("ProjectManagers")
+
+  @@map("user")
+}
+
+model Project {
+  id              String        @id @default(cuid())
+  name            String        @db.VarChar(30)
+  oneliner        String?       @db.VarChar(250)
+  squareLogoBlack String?       @map("square_logo_black") @db.Text
+  squareLogoWhite String?       @map("square_logo_white") @db.Text
+  wideLogoBlack   String?       @map("wide_logo_black") @db.Text
+  wideLogoWhite   String?       @map("wide_logo_white") @db.Text
+  origin          String?       @map("origin") @db.Text
+  domains         String[]      @map("domains")
+  projectType     CompanyType   @default(STARTUP) @map("project_type")
+  
+  // Relations
+  owner           User          @relation("ProjectOwner", fields: [ownerId], references: [id])
+  ownerId         String
+  managers        User[]        @relation("ProjectManagers")
+  badges          Badge[]
+  curatedLists    CuratedList[] @relation("CuratedListProjects")
+  
+  // Swipe relations
+  incomingSwipes  Swipe[]      @relation("inProjectSwipe")
+  outgoingSwipes  Swipe[]      @relation("outProjectSwipe")
+  incomingMatches Match[]      @relation("inProjectMatch")
+  outgoingMatches Match[]      @relation("outProjectMatch")
+
+  @@map("project")
+}
+
+model CuratedList {
+  id          String    @id @default(cuid())
+  name        String    @db.VarChar(100)
+  description String?   @db.VarChar(500)
+  projects    Project[] @relation("CuratedListProjects")
+
+  @@map("curated_list")
+}
+
+model Swipe {
+  id           String   @id @default(cuid())
+  gen          Int      @default(0) @db.SmallInt
+  isLiked      Boolean
+  inProject    Project  @relation("inProjectSwipe", fields: [inProjectId], references: [id])
+  inProjectId  String
+  outProject   Project  @relation("outProjectSwipe", fields: [outProjectId], references: [id])
+  outProjectId String
+  
+  // Match relations
+  inMatch      Match[]  @relation("swipeInMatch")
+  outMatch     Match[]  @relation("swipeOutMatch")
+
+  @@map("swipe")
+}
+
+model Match {
+  id           String  @id @default(cuid())
+  inProject    Project @relation("inProjectMatch", fields: [inProjectId], references: [id])
+  inProjectId  String
+  outProject   Project @relation("outProjectMatch", fields: [outProjectId], references: [id])
+  outProjectId String
+  swipeIn      Swipe   @relation("swipeInMatch", fields: [swipeInId], references: [id])
+  swipeInId    String
+  swipeOut     Swipe   @relation("swipeOutMatch", fields: [swipeOutId], references: [id])
+  swipeOutId   String
+
+  @@map("match")
+}
+
+model Badge {
+  id         String    @id @default(cuid())
+  name       String    @db.Text
+  slug       String    @unique
+  popularity Int       @default(0) @db.SmallInt
+  projects   Project[]
+
+  @@map("badge")
+}
+
+enum CompanyType {
+  SPECIALIST
+  INVESTOR
+  STARTUP
+  PUBLISHER
+}
