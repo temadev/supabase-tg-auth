@@ -2,12 +2,13 @@
 
 import { encodedRedirect } from "@/utils/utils";
 import { createClient } from "@/utils/supabase/server";
-import { redirect } from "next/navigation";
 import { AuthDataValidator } from '@telegram-auth/server';
 import { objectToAuthDataMap } from '@telegram-auth/server/utils';
 import crypto from 'crypto';
 import { TelegramAuthData } from "@telegram-auth/react";
+import { PrismaClient } from '@prisma/client';
 
+const prisma = new PrismaClient();
 const SERVER_SALT = process.env.AUTH_SALT;
 
 function generateSecurePassword(userId: number): string {
@@ -37,22 +38,42 @@ export const telegramSignInAction = async (data: TelegramAuthData) => {
   const { error } = await supabase.auth.signInWithPassword({ email, password });
 
   if (error) {
-    const { error } = await supabase.auth.signUp({ email, password });
-    if (error) {
-      return encodedRedirect("error", "/sign-in", error.message);
+    const { error: signUpError, data } = await supabase.auth.signUp({ email, password });
+    if (signUpError) {
+      return { error: signUpError.message, redirect: "/sign-in" };
     } else {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) return encodedRedirect("error", "/sign-in", error.message);
+      // Create user in Prisma DB
+      try {
+        await prisma.user.create({
+          data: {
+            authId: data.user!.id,
+            handle: tgUser.username || `user_${tgUser.id}`,
+            displayName: tgUser.first_name + (tgUser.last_name ? ` ${tgUser.last_name}` : ''),
+            profilePicture: tgUser.photo_url,
+            roles: ['user']
+          }
+        });
 
-      return redirect("/protected");
+        const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+        if (signInError) {
+          return { error: signInError.message, redirect: "/sign-in" };
+        }
+
+        return { success: true, redirect: "/protected" };
+      } catch (dbError) {
+        console.error('Failed to create user in database:', dbError);
+        // Clean up Supabase auth user if DB creation fails
+        await supabase.auth.signOut();
+        return { error: "Failed to create user profile", redirect: "/sign-in" };
+      }
     }
   }
 
-  return redirect("/protected");
+  return { success: true, redirect: "/protected" };
 }
 
 export const signOutAction = async () => {
   const supabase = await createClient();
   await supabase.auth.signOut();
-  return redirect("/sign-in");
+  return { success: true, redirect: "/sign-in" };
 };
